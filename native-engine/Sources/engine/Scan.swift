@@ -3,7 +3,6 @@ import AVFoundation
 import Vision
 import CoreGraphics
 
-private let scanIntervalSeconds: Double = 0.5
 private let scanClusterGapSeconds: Double = 2.0
 private let scanClusterIoU: Double = 0.2
 private let scanMinDetections = 2
@@ -22,7 +21,7 @@ private func rectIoU(_ a: CGRect, _ b: CGRect) -> Double {
     return union > 0 ? interArea / union : 0
 }
 
-func scanFaces(path: String) async throws -> [String: Any] {
+func scanFaces(path: String, interval: Double = 0.5) async throws -> [String: Any] {
     let info = try await loadVideoInfo(path: path)
     let reader = try AVAssetReader(asset: info.asset)
     let output = AVAssetReaderTrackOutput(
@@ -42,7 +41,7 @@ func scanFaces(path: String) async throws -> [String: Any] {
         if Task.isCancelled { reader.cancelReading(); throw CancellationError() }
         let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         guard t >= nextSampleTime else { continue }
-        nextSampleTime = t + scanIntervalSeconds
+        nextSampleTime = t + max(interval, 0.1)
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
 
         let observations = (try? await request.perform(on: pixelBuffer, orientation: .up)) ?? []

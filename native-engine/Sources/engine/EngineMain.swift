@@ -1,6 +1,6 @@
 import Foundation
 
-let BUILD = "native-20260915-2"
+let BUILD = "native-20261005-1"
 
 @main
 struct EngineMain {
@@ -45,16 +45,26 @@ struct EngineMain {
                             rectPixels: CGRect(x: jsonNumber(k["x"]) ?? 0, y: jsonNumber(k["y"]) ?? 0,
                                                width: jsonNumber(k["w"]) ?? 0, height: jsonNumber(k["h"]) ?? 0)))
                     }
+                    var options = TrackOptions()
+                    options.faceReanchor = json["face_reanchor"] as? Bool ?? false
+                    if let f = json["fusion"] as? [String: Any] {
+                        options.fusionIou = jsonNumber(f["iou"]) ?? options.fusionIou
+                        options.weightNormal = jsonNumber(f["w_normal"]) ?? options.weightNormal
+                        options.weightDrift = jsonNumber(f["w_drift"]) ?? options.weightDrift
+                        options.weightLowConfidence = jsonNumber(f["w_low"]) ?? options.weightLowConfidence
+                    }
                     let dense = try await denseBetween(
                         path: p, keyframes: keyframes,
                         from: jsonInt(json["from_frame"]) ?? 0,
-                        to: jsonInt(json["to_frame"]) ?? 0)
+                        to: jsonInt(json["to_frame"]) ?? 0,
+                        options: options)
                     return (200, HTTPError.json(["dense": dense]))
 
                 case ("POST", "/scan"):
                     let json = try parseBody(body)
                     guard let p = json["path"] as? String else { throw EngineError.badRequest("缺少 path") }
-                    return (200, HTTPError.json(try await scanFaces(path: p)))
+                    let interval = jsonNumber(json["interval"]) ?? 0.5
+                    return (200, HTTPError.json(try await scanFaces(path: p, interval: interval)))
 
                 case ("POST", "/render"):
                     let json = try parseBody(body)
@@ -72,6 +82,16 @@ struct EngineMain {
 
                 case ("POST", "/render/cancel"):
                     return (200, HTTPError.json(RenderManager.shared.cancel()))
+
+                case ("POST", "/render/image"):
+                    let json = try parseBody(body)
+                    guard let project = json["project"] as? [String: Any],
+                          let output = json["output"] as? String else {
+                        throw EngineError.badRequest("缺少 project/output")
+                    }
+                    let personSegmentation = json["person_segmentation"] as? Bool ?? false
+                    return (200, HTTPError.json(try renderImage(
+                        project: project, output: output, personSegmentation: personSegmentation)))
 
                 case ("POST", "/project/save"):
                     let json = try parseBody(body)

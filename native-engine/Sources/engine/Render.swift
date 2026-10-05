@@ -20,6 +20,7 @@ struct RenderClip {
 struct RenderTrack {
     let clipId: String
     let effect: String
+    let intensity: Double
     let keyframes: [Keyframe]
     let dense: [Int: [Double]]
     let tStart: Double?
@@ -219,6 +220,7 @@ final class RenderManager: @unchecked Sendable {
             tracks.append(RenderTrack(
                 clipId: t["clipId"] as? String ?? "",
                 effect: t["effect"] as? String ?? "pixelate",
+                intensity: min(max(jsonNumber(t["intensity"]) ?? 0.5, 0), 1),
                 keyframes: keyframes, dense: dense,
                 tStart: jsonNumber(t["tStart"]), tEnd: jsonNumber(t["tEnd"])))
         }
@@ -314,16 +316,16 @@ final class RenderContext {
         segments.first { time >= $0.compStart && time < $0.compEnd } ?? segments.last
     }
 
-    func activeRects(segment: RenderSegment, at sourceTime: Double) -> [(String, CGRect)] {
+    func activeRects(segment: RenderSegment, at sourceTime: Double) -> [(String, CGRect, Double)] {
         let clip = clips[segment.clipIndex]
-        var result: [(String, CGRect)] = []
+        var result: [(String, CGRect, Double)] = []
         for track in tracks where track.clipId == clip.id {
             let s = max(clip.inSec, track.tStart ?? clip.inSec)
             let e = min(clip.outSec, track.tEnd ?? clip.outSec)
             guard sourceTime >= s, sourceTime <= e else { continue }
             let frame = Int((sourceTime * clip.fps).rounded())
             guard let rect = interpolate(track: track, frame: frame) else { continue }
-            result.append((track.effect, rect))
+            result.append((track.effect, rect, track.intensity))
         }
         return result
     }
@@ -425,13 +427,13 @@ final class RenderCompositor: NSObject, AVVideoCompositing {
             if context.personSegmentation && !active.isEmpty {
                 personMask = segmentPerson(in: sourceBuffer, extent: base.extent, transform: segment.transform)
             }
-            for (effect, rect) in active {
+            for (effect, rect, intensity) in active {
                 let ciRect = CGRect(
                     x: rect.minX, y: H - rect.minY - rect.height,
                     width: rect.width, height: rect.height
                 ).intersection(CGRect(x: 0, y: 0, width: W, height: H)).integral
                 guard ciRect.width > 1, ciRect.height > 1 else { continue }
-                base = apply(effect: effect, rect: ciRect, to: base, personMask: personMask)
+                base = apply(effect: effect, rect: ciRect, intensity: intensity, to: base, personMask: personMask)
             }
 
             let clip = context.clips[segment.clipIndex]
@@ -477,37 +479,8 @@ final class RenderCompositor: NSObject, AVVideoCompositing {
         return mask.cropped(to: extent)
     }
 
-    private func apply(effect: String, rect: CGRect, to base: CIImage, personMask: CIImage? = nil) -> CIImage {
-        let clamped = base.clampedToExtent()
-        let patch: CIImage
-        switch effect {
-        case "blur":
-            let blurred = clamped.applyingGaussianBlur(sigma: max(rect.height, rect.width) / 10)
-            patch = blurred.cropped(to: rect)
-        case "blackbox":
-            patch = CIImage(color: .black).cropped(to: rect)
-        default:
-            let scale = max(max(rect.width, rect.height) / 12, 4)
-            patch = CIFilter(name: "CIPixellate", parameters: [
-                kCIInputImageKey: clamped.cropped(to: rect),
-                kCIInputScaleKey: scale,
-                kCIInputCenterKey: CIVector(x: rect.midX, y: rect.midY),
-            ])?.outputImage ?? clamped.cropped(to: rect)
-        }
-        if let personMask {
-            let rectWhite = CIImage(color: .white).cropped(to: rect)
-            let maskInRect = personMask.applyingFilter("CIMultiplyCompositing", parameters: [
-                kCIInputBackgroundImageKey: rectWhite,
-            ])
-            if let blended = CIFilter(name: "CIBlendWithMask", parameters: [
-                kCIInputImageKey: patch,
-                kCIInputBackgroundImageKey: base,
-                kCIInputMaskImageKey: maskInRect,
-            ])?.outputImage {
-                return blended
-            }
-        }
-        return patch.composited(over: base)
+    private func apply(effect: String, rect: CGRect, intensity: Double, to base: CIImage, personMask: CIImage? = nil) -> CIImage {
+        applyEffect(effect: effect, rect: rect, intensity: intensity, to: base, personMask: personMask)
     }
 
     private func fit(_ image: CIImage, into size: CGSize) -> CIImage {
