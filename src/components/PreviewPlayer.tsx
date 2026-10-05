@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useStore, locate, clipOutDur, totalDuration, uid, interpolate } from "../store";
 import { syncDirtyTracks } from "../trackSync";
 import { api } from "../api";
+import { scanInterval } from "../settings";
 import type { CropRect, Track } from "../types";
 
 type DragMode =
@@ -38,6 +39,7 @@ export default function PreviewPlayer() {
   const removeTrack = useStore((s) => s.removeTrack);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement>(null);
   const fxTmpRef = useRef<HTMLCanvasElement | null>(null);
@@ -53,9 +55,20 @@ export default function PreviewPlayer() {
   const [cropDraft, setCropDraft] = useState<CropRect | null>(null);
   const [loadedClipId, setLoadedClipId] = useState<string | null>(null);
   const lastRevStepRef = useRef(0);
+  // 画布缩放/平移
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panMode, setPanMode] = useState(false);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const panModeRef = useRef(false);
+  zoomRef.current = zoom;
+  panRef.current = pan;
+  panModeRef.current = panMode;
 
   const loc = clips.length ? locate(clips, currentTime) : null;
   const clip = loc?.clip ?? null;
+  const isImage = clip?.kind === "image";
   const crop: CropRect = clip?.crop ?? {
     x: 0,
     y: 0,
@@ -81,9 +94,13 @@ export default function PreviewPlayer() {
     }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const v = videoRef.current;
+    const img = imgRef.current;
+    const media: HTMLVideoElement | HTMLImageElement | null = v ?? img;
     const s = useStore.getState();
     const l = s.clips.length ? locate(s.clips, s.currentTime) : null;
-    if (!v || !l || v.readyState < 2 || W <= 0) return;
+    if (!media || !l || W <= 0) return;
+    if (v && v.readyState < 2) return;
+    if (img && (!img.complete || img.naturalWidth === 0)) return;
     const c = l.clip;
     const cr: CropRect = c.crop ?? { x: 0, y: 0, w: c.width, h: c.height };
     const sc = W / cr.w;
@@ -138,22 +155,26 @@ export default function PreviewPlayer() {
       const ddw = (sw / bw) * dw;
       const ddh = (sh / bh) * dh;
       if (t.effect === "pixelate") {
-        const tw = Math.max(2, Math.round(ddw / 14));
-        const th = Math.max(2, Math.round(ddh / 14));
+        // 与导出公式一致：块大小 = 矩形边长 / (24 - 18 * intensity)
+        const div = 24 - 18 * t.intensity;
+        const tw = Math.max(2, Math.round(ddw / div));
+        const th = Math.max(2, Math.round(ddh / div));
         tmp.width = tw;
         tmp.height = th;
         tctx.imageSmoothingEnabled = true;
-        tctx.drawImage(v, sx, sy, sw, sh, 0, 0, tw, th);
+        tctx.drawImage(media, sx, sy, sw, sh, 0, 0, tw, th);
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(tmp, 0, 0, tw, th, ddx, ddy, ddw, ddh);
         ctx.imageSmoothingEnabled = true;
       } else {
-        const tw = Math.max(2, Math.round(ddw / 8));
-        const th = Math.max(2, Math.round(ddh / 8));
+        // 与导出公式对应：sigma ∝ (0.02 + 0.18 * intensity)，默认强度 0.5 时除数为 8
+        const div = (8 * 0.11) / (0.02 + 0.18 * t.intensity);
+        const tw = Math.max(2, Math.round(ddw / div));
+        const th = Math.max(2, Math.round(ddh / div));
         tmp.width = tw;
         tmp.height = th;
         tctx.imageSmoothingEnabled = true;
-        tctx.drawImage(v, sx, sy, sw, sh, 0, 0, tw, th);
+        tctx.drawImage(media, sx, sy, sw, sh, 0, 0, tw, th);
         ctx.imageSmoothingEnabled = true;
         for (let pass = 0; pass < 2; pass++) {
           ctx.drawImage(tmp, 0, 0, tw, th, ddx, ddy, ddw, ddh);
@@ -190,8 +211,9 @@ export default function PreviewPlayer() {
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !clip) return;
-    if (loadedClipId !== clip.id) {
+    if (!v || !clip || clip.kind !== "video") return;
+    // 元素可能因图片/视频切换被重挂载，此时 src 为空需要重新加载
+    if (loadedClipId !== clip.id || !v.currentSrc) {
       v.src = convertFileSrc(clip.src);
       v.load();
       setLoadedClipId(clip.id);
@@ -203,6 +225,48 @@ export default function PreviewPlayer() {
       };
     }
   }, [clip?.id]);
+
+  // 片段切换时复位缩放
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setPanMode(false);
+  }, [clip?.id]);
+
+  const clampPan = (p: { x: number; y: number }, z: number) => {
+    const { w, h } = sizeRef.current;
+    return {
+      x: Math.min(0, Math.max(w * (1 - z), p.x)),
+      y: Math.min(0, Math.max(h * (1 - z), p.y)),
+    };
+  };
+
+  // 滚轮/触控板捏合缩放，以光标为锚点
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const s = useStore.getState();
+      if (!s.clips.length || s.busy) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const z0 = zoomRef.current;
+      const z = Math.min(6, Math.max(1, z0 * Math.exp(-e.deltaY * 0.002)));
+      const p0 = panRef.current;
+      const p =
+        z === 1
+          ? { x: 0, y: 0 }
+          : {
+              x: cursor.x - ((cursor.x - p0.x) / z0) * z,
+              y: cursor.y - ((cursor.y - p0.y) / z0) * z,
+            };
+      setZoom(z);
+      setPan(clampPan(p, z));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -311,21 +375,76 @@ export default function PreviewPlayer() {
     const c = l.clip;
     setDetecting(true);
     setDetectMsg(null);
+    const iou = (
+      a: { x: number; y: number; w: number; h: number },
+      b: { x: number; y: number; w: number; h: number }
+    ) => {
+      const x0 = Math.max(a.x, b.x);
+      const y0 = Math.max(a.y, b.y);
+      const x1 = Math.min(a.x + a.w, b.x + b.w);
+      const y1 = Math.min(a.y + a.h, b.y + b.h);
+      const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
+      const union = a.w * a.h + b.w * b.h - inter;
+      return union > 0 ? inter / union : 0;
+    };
+    // 照片：单帧检测，直接创建固定遮罩
+    if (c.kind === "image") {
+      s.setBusy("正在识别人脸…");
+      try {
+        const { boxes } = await api.detect(c.src, 0);
+        const existing = s.tracks.filter((t) => t.clipId === c.id);
+        const fresh = boxes.filter(
+          (b) =>
+            !existing.some((t) => {
+              const box = interpolate(t.keyframes, 0);
+              return box && iou({ x: box[0], y: box[1], w: box[2], h: box[3] }, b) > 0.3;
+            })
+        );
+        if (fresh.length === 0) {
+          setDetectMsg(boxes.length > 0 ? "检测到的人脸已有遮罩" : "照片中没有检测到人脸");
+          setTimeout(() => setDetectMsg(null), 3000);
+          return;
+        }
+        s.pushHistory();
+        let firstId: string | null = null;
+        for (const b of fresh) {
+          const track: Track = {
+            id: uid(),
+            clipId: c.id,
+            effect: "pixelate",
+            intensity: 0.5,
+            fixed: true,
+            keyframes: [
+              {
+                frame: 0,
+                x: Math.round(b.x),
+                y: Math.round(b.y),
+                w: Math.round(b.w),
+                h: Math.round(b.h),
+              },
+            ],
+            dense: {},
+            tStart: null,
+            tEnd: null,
+          };
+          s.addTrack(track);
+          firstId ??= track.id;
+        }
+        if (firstId) s.setSelectedTrack(firstId);
+        setDetectMsg(`已创建 ${fresh.length} 个人脸遮罩`);
+        setTimeout(() => setDetectMsg(null), 3000);
+      } catch (e) {
+        setDetectMsg(`识别失败: ${e instanceof Error ? e.message : e}`);
+        setTimeout(() => setDetectMsg(null), 5000);
+      } finally {
+        s.setBusy(null);
+        setDetecting(false);
+      }
+      return;
+    }
     s.setBusy("正在扫描全片人脸…");
     try {
-      const { tracks: scanned } = await api.scan(c.src);
-      const iou = (
-        a: { x: number; y: number; w: number; h: number },
-        b: { x: number; y: number; w: number; h: number }
-      ) => {
-        const x0 = Math.max(a.x, b.x);
-        const y0 = Math.max(a.y, b.y);
-        const x1 = Math.min(a.x + a.w, b.x + b.w);
-        const y1 = Math.min(a.y + a.h, b.y + b.h);
-        const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
-        const union = a.w * a.h + b.w * b.h - inter;
-        return union > 0 ? inter / union : 0;
-      };
+      const { tracks: scanned } = await api.scan(c.src, scanInterval());
       const existing = s.tracks.filter((t) => t.clipId === c.id);
       const fresh = scanned.filter((st) => {
         const k0 = st.keyframes[0];
@@ -349,6 +468,7 @@ export default function PreviewPlayer() {
           id: uid(),
           clipId: c.id,
           effect: "pixelate",
+          intensity: 0.5,
           fixed: false,
           keyframes: kfs.map((k) => ({ ...k })),
           dense: {},
@@ -407,7 +527,9 @@ export default function PreviewPlayer() {
       }
       if (e.code === "Escape") {
         const s = useStore.getState();
-        if (s.tool === "crop") {
+        if (panModeRef.current) {
+          setPanMode(false);
+        } else if (s.tool === "crop") {
           s.setTool("select");
         } else {
           s.setSelectedTrack(null);
@@ -438,6 +560,7 @@ export default function PreviewPlayer() {
         const l = s.clips.length ? locate(s.clips, s.currentTime) : null;
         if (!l) return;
         const c = l.clip;
+        if (c.kind === "image") return; // 照片无入点/出点/分割
         e.preventDefault();
         s.pushHistory();
         if (e.code === "KeyI") {
@@ -457,9 +580,11 @@ export default function PreviewPlayer() {
 
   const toSrc = (clientX: number, clientY: number) => {
     const el = containerRef.current!.getBoundingClientRect();
+    const z = zoomRef.current;
+    const p = panRef.current;
     return {
-      x: (clientX - el.left) / scale + crop.x,
-      y: (clientY - el.top) / scale + crop.y,
+      x: (clientX - el.left - p.x) / (scale * z) + crop.x,
+      y: (clientY - el.top - p.y) / (scale * z) + crop.y,
     };
   };
 
@@ -524,6 +649,27 @@ export default function PreviewPlayer() {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (!clip) return;
+    // 平移模式：拖动移动画布
+    if (panMode && zoom > 1) {
+      const startP = panRef.current;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const move = (ev: MouseEvent) => {
+        setPan(
+          clampPan(
+            { x: startP.x + ev.clientX - startX, y: startP.y + ev.clientY - startY },
+            zoomRef.current
+          )
+        );
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+      return;
+    }
     const p = toSrc(e.clientX, e.clientY);
     if (tool === "crop") {
       if (!cropDraft) return;
@@ -584,6 +730,13 @@ export default function PreviewPlayer() {
     if (!clip || tool === "crop") return;
     const p = toSrc(e.clientX, e.clientY);
     const hit = hitTest(p.x, p.y);
+    // 平移模式下双击空白处复位缩放
+    if (!hit && panMode) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setPanMode(false);
+      return;
+    }
     if (!hit) return;
     setDrag({ kind: "none" });
     const tEnd = loc!.srcTime;
@@ -635,11 +788,14 @@ export default function PreviewPlayer() {
     if (finished.kind === "new") {
       const r = normRect(finished.x0, finished.y0, finished.x1, finished.y1);
       if (r.w <= 6 || r.h <= 6) return;
+      // 照片没有时序，遮罩一律为固定遮罩
+      const fixed = isImage || finished.fixed;
       const track: Track = {
         id: uid(),
         clipId: clip.id,
         effect: "pixelate",
-        fixed: finished.fixed,
+        intensity: 0.5,
+        fixed,
         keyframes: [
           {
             frame: srcFrame,
@@ -690,25 +846,45 @@ export default function PreviewPlayer() {
     <div className="preview">
       <div
         ref={containerRef}
-        className="preview-stage"
+        className={`preview-stage ${panMode && zoom > 1 ? "panning" : ""}`}
         style={{ height: size.h || undefined }}
         onMouseDown={onMouseDown}
         onDoubleClick={onDoubleClick}
       >
         {clip ? (
-          <>
-            <video
-              ref={videoRef}
-              style={{
-                position: "absolute",
-                left: -crop.x * scale,
-                top: -crop.y * scale,
-                width: clip.width * scale,
-                height: clip.height * scale,
-              }}
-              muted={false}
-              playsInline
-            />
+          <div
+            className="preview-zoom"
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            }}
+          >
+            {isImage ? (
+              <img
+                ref={imgRef}
+                src={convertFileSrc(clip.src)}
+                draggable={false}
+                style={{
+                  position: "absolute",
+                  left: -crop.x * scale,
+                  top: -crop.y * scale,
+                  width: clip.width * scale,
+                  height: clip.height * scale,
+                }}
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                style={{
+                  position: "absolute",
+                  left: -crop.x * scale,
+                  top: -crop.y * scale,
+                  width: clip.width * scale,
+                  height: clip.height * scale,
+                }}
+                muted={false}
+                playsInline
+              />
+            )}
             <canvas
               ref={fxCanvasRef}
               style={{
@@ -872,9 +1048,9 @@ export default function PreviewPlayer() {
                 }}
               />
             )}
-          </>
+          </div>
         ) : (
-          <div className="preview-empty">导入视频开始编辑</div>
+          <div className="preview-empty">导入视频或照片开始编辑</div>
         )}
         {busy && (
           <div className="preview-busy">
@@ -887,44 +1063,99 @@ export default function PreviewPlayer() {
         )}
       </div>
       <div className="preview-controls">
-        <button
-          className={playing && playDir === -1 ? "active" : ""}
-          onClick={() => playInDirection(-1)}
-          disabled={!clip || !!busy}
-          title="倒放"
-        >
-          ◀
-        </button>
-        <button
-          className={playing && playDir === 1 ? "active" : ""}
-          onClick={() => playInDirection(1)}
-          disabled={!clip || !!busy}
-          title="播放"
-        >
-          ▶
-        </button>
-        <button onClick={stop} disabled={!clip} title="停止并回到开头">
-          ■
-        </button>
-        {[0.5, 1, 2].map((r) => (
-          <button
-            key={r}
-            className={playbackRate === r ? "active" : ""}
-            onClick={() => useStore.getState().setPlaybackRate(r)}
-          >
-            {r}x
-          </button>
-        ))}
+        {!isImage && (
+          <>
+            <button
+              className={playing && playDir === -1 ? "active" : ""}
+              onClick={() => playInDirection(-1)}
+              disabled={!clip || !!busy}
+              title="倒放"
+            >
+              ◀
+            </button>
+            <button
+              className={playing && playDir === 1 ? "active" : ""}
+              onClick={() => playInDirection(1)}
+              disabled={!clip || !!busy}
+              title="播放"
+            >
+              ▶
+            </button>
+            <button onClick={stop} disabled={!clip} title="停止并回到开头">
+              ■
+            </button>
+            {[0.5, 1, 2].map((r) => (
+              <button
+                key={r}
+                className={playbackRate === r ? "active" : ""}
+                onClick={() => useStore.getState().setPlaybackRate(r)}
+              >
+                {r}x
+              </button>
+            ))}
+          </>
+        )}
         <button
           onClick={scanAllFaces}
           disabled={!clip || !!busy || detecting}
-          title="扫描整个视频，自动识别人脸并创建跟踪遮罩"
+          title={isImage ? "识别照片中的人脸并创建固定遮罩" : "扫描整个视频，自动识别人脸并创建跟踪遮罩"}
         >
-          {detecting ? "扫描中…" : "扫描人脸"}
+          {detecting ? "识别中…" : "扫描人脸"}
         </button>
+        {clip && (
+          <>
+            <span className="sep-v" />
+            <button
+              title="缩小"
+              disabled={zoom <= 1}
+              onClick={() => {
+                const z = Math.max(1, zoom / 1.25);
+                setZoom(z);
+                setPan(z === 1 ? { x: 0, y: 0 } : clampPan(panRef.current, z));
+              }}
+            >
+              −
+            </button>
+            <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+            <button
+              title="放大（也可在画面上滚轮/双指捏合）"
+              disabled={zoom >= 6}
+              onClick={() => {
+                const z = Math.min(6, zoom * 1.25);
+                setZoom(z);
+                setPan(clampPan(panRef.current, z));
+              }}
+            >
+              ＋
+            </button>
+            {zoom > 1 && (
+              <>
+                <button
+                  className={panMode ? "active" : ""}
+                  title="平移模式：拖动移动画布（Esc 退出）"
+                  onClick={() => setPanMode(!panMode)}
+                >
+                  ✋ 平移
+                </button>
+                <button
+                  title="重置缩放"
+                  onClick={() => {
+                    setZoom(1);
+                    setPan({ x: 0, y: 0 });
+                    setPanMode(false);
+                  }}
+                >
+                  1:1
+                </button>
+              </>
+            )}
+          </>
+        )}
         {detectMsg && <span className="detect-msg">{detectMsg}</span>}
         <span className="time">
-          {currentTime.toFixed(2)}s / {totalDuration(clips).toFixed(2)}s
+          {isImage
+            ? `${clip.width} × ${clip.height}`
+            : `${currentTime.toFixed(2)}s / ${totalDuration(clips).toFixed(2)}s`}
         </span>
       </div>
     </div>

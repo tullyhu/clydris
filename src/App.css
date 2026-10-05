@@ -595,6 +595,120 @@ button.export {
   line-height: 1.5;
 }
 
+.preview-stage.panning {
+  cursor: grab;
+}
+
+.preview-stage.panning:active {
+  cursor: grabbing;
+}
+
+.preview-zoom {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+}
+
+.preview-zoom img {
+  -webkit-user-drag: none;
+}
+
+.sep-v {
+  width: 0.5px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.zoom-value {
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  text-align: center;
+}
+
+.mask-lanes {
+  position: relative;
+  margin-top: 8px;
+}
+
+.mask-lane {
+  position: absolute;
+  border-radius: 999px;
+  background: var(--tracking);
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.mask-lane.fixed {
+  background: var(--fixed);
+}
+
+.mask-lane.selected {
+  background: var(--selected);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+}
+
+.track-intensity {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.track-intensity label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.track-intensity input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.intensity-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+.apply-all {
+  font-size: 11px;
+  padding: 3px 10px;
+  align-self: flex-start;
+}
+
+.settings-row select {
+  background: var(--surface);
+  color: var(--text);
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.fusion-row {
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.fusion-row input {
+  width: 64px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
 .license-text {
   max-height: 55vh;
   overflow-y: auto;

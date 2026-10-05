@@ -1,6 +1,7 @@
 const BASE = "http://localhost:8765";
 
 export interface ProbeResult {
+  kind: "video" | "image";
   duration: number;
   fps: number;
   width: number;
@@ -66,21 +67,41 @@ export const api = {
   probe: (path: string) => post<ProbeResult>("/probe", { path }),
   detect: (path: string, frame: number) =>
     post<{ boxes: DetectBox[] }>("/detect", { path, frame }),
-  scan: (path: string) => post<{ tracks: ScanTrack[] }>("/scan", { path }),
+  scan: (path: string, interval = 0.5) =>
+    post<{ tracks: ScanTrack[] }>("/scan", { path, interval }),
   track: (
     path: string,
     keyframes: unknown[],
     fromFrame: number,
-    toFrame: number
+    toFrame: number,
+    options?: {
+      faceReanchor?: boolean;
+      fusion?: { iou: number; wNormal: number; wDrift: number; wLow: number };
+    }
   ) =>
     post<{ dense: Record<number, [number, number, number, number]> }>("/track", {
       path,
       keyframes,
       from_frame: fromFrame,
       to_frame: toFrame,
+      face_reanchor: options?.faceReanchor ?? false,
+      fusion: options?.fusion
+        ? {
+            iou: options.fusion.iou,
+            w_normal: options.fusion.wNormal,
+            w_drift: options.fusion.wDrift,
+            w_low: options.fusion.wLow,
+          }
+        : undefined,
     }),
   render: (project: unknown, output: string, personSegmentation = false) =>
     post<{ job_id: string }>("/render", {
+      project,
+      output,
+      person_segmentation: personSegmentation,
+    }),
+  renderImage: (project: unknown, output: string, personSegmentation = false) =>
+    post<{ ok: boolean; output: string }>("/render/image", {
       project,
       output,
       person_segmentation: personSegmentation,

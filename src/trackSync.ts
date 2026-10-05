@@ -1,10 +1,17 @@
 import { useStore } from "./store";
 import { api } from "./api";
+import { faceReanchor, getFusionParams } from "./settings";
 
 export async function syncDirtyTracks(): Promise<boolean> {
   const s = useStore.getState();
-  const dirty = s.tracks.filter((t) => t.dirty && !t.fixed);
+  const dirty = s.tracks.filter((t) => {
+    if (!t.dirty || t.fixed) return false;
+    const clip = s.clips.find((c) => c.id === t.clipId);
+    return clip?.kind !== "image";
+  });
   if (dirty.length === 0) return true;
+  const reanchor = faceReanchor();
+  const fusion = getFusionParams();
   let i = 0;
   for (const t of dirty) {
     i++;
@@ -21,7 +28,10 @@ export async function syncDirtyTracks(): Promise<boolean> {
     const endFrame = Math.round((t.tEnd ?? clip.out) * clip.fps);
     useStore.getState().setBusy(`跟踪中… ${i}/${dirty.length}`);
     try {
-      const { dense } = await api.track(clip.src, t.keyframes, fromFrame, endFrame);
+      const { dense } = await api.track(clip.src, t.keyframes, fromFrame, endFrame, {
+        faceReanchor: reanchor,
+        fusion,
+      });
       useStore.getState().mergeDense(t.id, dense);
       useStore.getState().updateTrack(t.id, { dirty: false, dirtyFrom: null });
     } catch (e) {

@@ -8,6 +8,7 @@ export interface CropRect {
 export interface Clip {
   id: string;
   src: string;
+  kind: "video" | "image";
   duration: number;
   fps: number;
   width: number;
@@ -33,6 +34,8 @@ export interface Track {
   id: string;
   clipId: string;
   effect: TrackEffect;
+  /** 效果强度 0–1，默认 0.5（黑框忽略） */
+  intensity: number;
   fixed: boolean;
   keyframes: Keyframe[];
   dense: Record<number, [number, number, number, number]>;

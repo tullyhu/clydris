@@ -5,6 +5,15 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useStore, uid, locate } from "./store";
 import { api } from "./api";
 import { syncDirtyTracks } from "./trackSync";
+import {
+  getPrecision,
+  setPrecision,
+  getFusionParams,
+  setFusionParam,
+  FUSION_DEFAULTS,
+  type Precision,
+  type FusionParams,
+} from "./settings";
 import type { Clip, Track } from "./types";
 import licensesText from "../licenses/THIRD-PARTY-LICENSES.txt?raw";
 import PreviewPlayer from "./components/PreviewPlayer";
@@ -35,6 +44,8 @@ function App() {
   const [personSegmentation, setPersonSegmentation] = useState(
     () => localStorage.getItem("vr.personSegmentation") === "1"
   );
+  const [precision, setPrecisionState] = useState<Precision>(getPrecision);
+  const [fusion, setFusion] = useState<FusionParams>(getFusionParams);
   const [startupElapsed, setStartupElapsed] = useState(0);
 
   useEffect(() => {
@@ -59,8 +70,26 @@ function App() {
   }, []);
 
   const VIDEO_EXTS = ["mp4", "mov", "mkv", "webm", "m4v"];
+  const IMAGE_EXTS = ["jpg", "jpeg", "png", "heic", "heif", "webp", "tiff", "tif", "bmp"];
 
   const addFiles = async (paths: string[]) => {
+    const existing = useStore.getState().clips;
+    const hasImage = existing.some((c) => c.kind === "image");
+    const images = paths.filter((p) =>
+      IMAGE_EXTS.includes(p.split(".").pop()?.toLowerCase() ?? "")
+    );
+    if (hasImage && paths.length) {
+      setNotice({ title: "无法导入", msg: "照片项目为单张模式，请先删除现有照片" });
+      return;
+    }
+    if (images.length && existing.length) {
+      setNotice({ title: "无法导入", msg: "照片不能与视频混合编辑，请先清空时间轴" });
+      return;
+    }
+    if (images.length > 1) {
+      setNotice({ title: "无法导入", msg: "一次只能导入一张照片" });
+      return;
+    }
     if (paths.length) useStore.getState().pushHistory();
     for (const p of paths) {
       try {
@@ -68,6 +97,7 @@ function App() {
         const clip: Clip = {
           id: uid(),
           src: p,
+          kind: meta.kind ?? "video",
           duration: meta.duration,
           fps: meta.fps,
           width: meta.width,
@@ -92,7 +122,7 @@ function App() {
     const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
       if (event.payload.type === "drop") {
         const paths = event.payload.paths.filter((p) =>
-          VIDEO_EXTS.includes(p.split(".").pop()?.toLowerCase() ?? "")
+          [...VIDEO_EXTS, ...IMAGE_EXTS].includes(p.split(".").pop()?.toLowerCase() ?? "")
         );
         if (paths.length) addFiles(paths).catch(() => {});
       }
@@ -105,10 +135,48 @@ function App() {
   const importVideo = async () => {
     const paths = await open({
       multiple: true,
-      filters: [{ name: "Video", extensions: VIDEO_EXTS }],
+      filters: [
+        { name: "媒体", extensions: [...VIDEO_EXTS, ...IMAGE_EXTS] },
+        { name: "视频", extensions: VIDEO_EXTS },
+        { name: "照片", extensions: IMAGE_EXTS },
+      ],
     });
     if (!paths) return;
     await addFiles(Array.isArray(paths) ? paths : [paths]).catch(() => {});
+  };
+
+  const exportImage = async () => {
+    const s = useStore.getState();
+    const clip = s.clips[0];
+    if (!clip || clip.kind !== "image" || renderPct !== null) return;
+    const output = await save({
+      defaultPath: "redacted.png",
+      filters: [{ name: "PNG", extensions: ["png"] }],
+    });
+    if (!output) return;
+    const project = {
+      path: clip.src,
+      crop: clip.crop,
+      tracks: s.tracks
+        .filter((t) => t.clipId === clip.id)
+        .map((t) => ({
+          effect: t.effect,
+          intensity: t.intensity,
+          keyframes: t.keyframes,
+        })),
+    };
+    s.setBusy("正在导出…");
+    try {
+      await api.renderImage(project, output, personSegmentation);
+      s.setBusy(null);
+      setNotice({ title: "导出完成", msg: output, path: output });
+    } catch (e) {
+      s.setBusy(null);
+      setNotice({
+        title: "导出失败",
+        msg: `${e instanceof Error ? e.message : e}`,
+      });
+    }
   };
 
   const exportVideo = async () => {
@@ -136,6 +204,7 @@ function App() {
       tracks: s.tracks.map((t) => ({
         clipId: t.clipId,
         effect: t.effect,
+        intensity: t.intensity,
         keyframes: t.keyframes,
         dense: t.dense,
         tStart: t.tStart,
@@ -242,7 +311,7 @@ function App() {
     if (!path) return;
     try {
       await api.saveProject(path, {
-        version: 1,
+        version: 2,
         clips: s.clips,
         tracks: s.tracks,
       });
@@ -263,13 +332,19 @@ function App() {
     if (!path || Array.isArray(path)) return;
     try {
       const data = await api.loadProject(path);
-      if (data.version !== 1 || !Array.isArray(data.clips) || !Array.isArray(data.tracks)) {
+      if (
+        (data.version !== 1 && data.version !== 2) ||
+        !Array.isArray(data.clips) ||
+        !Array.isArray(data.tracks)
+      ) {
         setNotice({ title: "打开失败", msg: "项目文件格式不受支持" });
         return;
       }
       const clips: Clip[] = [];
       const skipped: string[] = [];
-      for (const c of data.clips as Clip[]) {
+      for (const raw of data.clips as Clip[]) {
+        // v1 项目没有 kind 字段，一律视为视频
+        const c: Clip = { ...raw, kind: raw.kind ?? "video" };
         try {
           await api.probe(c.src);
           clips.push(c);
@@ -278,11 +353,14 @@ function App() {
         }
       }
       const clipIds = new Set(clips.map((c) => c.id));
-      const tracks = (data.tracks as Track[]).filter((t) => clipIds.has(t.clipId));
+      // v1 项目没有 intensity 字段，补默认值 0.5
+      const tracks = (data.tracks as Track[])
+        .filter((t) => clipIds.has(t.clipId))
+        .map((t) => ({ ...t, intensity: t.intensity ?? 0.5 }));
       if (clips.length === 0) {
         setNotice({
           title: "打开失败",
-          msg: `所有源视频均不可用：${skipped.join("、")}`,
+          msg: `所有源文件均不可用：${skipped.join("、")}`,
         });
         return;
       }
@@ -304,12 +382,13 @@ function App() {
   const loc = locate(clips, currentTime);
   const clipTracks = loc ? tracks.filter((t) => t.clipId === loc.clip.id) : [];
   const selected = tracks.find((t) => t.id === selectedTrackId) ?? null;
+  const isImageProject = clips.length > 0 && clips[0].kind === "image";
 
   return (
     <main className="app">
       <header className="toolbar">
         <button onClick={importVideo} disabled={!sidecarReady}>
-          导入视频
+          导入媒体
         </button>
         <button onClick={openProject} disabled={!sidecarReady} title="打开 .vproj.json 项目文件">
           打开项目
@@ -342,8 +421,16 @@ function App() {
           </button>
         )}
         <span className="sep" />
-        <button className="export" onClick={exportVideo} disabled={!sidecarReady || clips.length === 0 || renderPct !== null}>
-          {renderPct !== null ? `导出中 ${renderPct}%` : "导出 MP4"}
+        <button
+          className="export"
+          onClick={isImageProject ? exportImage : exportVideo}
+          disabled={!sidecarReady || clips.length === 0 || renderPct !== null}
+        >
+          {isImageProject
+            ? "导出 PNG"
+            : renderPct !== null
+              ? `导出中 ${renderPct}%`
+              : "导出 MP4"}
         </button>
         {renderPct !== null && (
           <button onClick={cancelExport} title="终止当前导出任务">
@@ -432,16 +519,58 @@ function App() {
               </label>
             </div>
           )}
+          {selected && selected.effect !== "blackbox" && (
+            <div className="track-intensity">
+              <label>
+                强度
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={selected.intensity}
+                  onMouseDown={() => useStore.getState().pushHistory()}
+                  onChange={(e) =>
+                    useStore
+                      .getState()
+                      .updateTrack(selected.id, { intensity: +e.target.value })
+                  }
+                />
+                <span className="intensity-value">
+                  {Math.round(selected.intensity * 100)}%
+                </span>
+              </label>
+              <button
+                className="apply-all"
+                title="把选中遮罩的效果和强度应用到当前片段的所有遮罩"
+                onClick={() => {
+                  const s = useStore.getState();
+                  s.pushHistory();
+                  for (const t of s.tracks) {
+                    if (t.clipId !== selected.clipId || t.id === selected.id) continue;
+                    s.updateTrack(t.id, {
+                      effect: selected.effect,
+                      intensity: selected.intensity,
+                    });
+                  }
+                }}
+              >
+                应用到全部遮罩
+              </button>
+            </div>
+          )}
           <details className="hint-details">
             <summary>操作帮助</summary>
             <p className="hint">
               在画面空白处按住拖动 = 创建遮罩；Shift+拖动 =
               固定遮罩（不跟踪）；点住框内部 = 拖动；点住边框 =
               调整大小；双击框 = 在此时间结束。编辑不影响已跟踪内容，按播放键时才统一跟踪。
+              滚轮/双指捏合 = 缩放画面，放大后开启「平移」可拖动画布。
             </p>
             <p className="hint">
-              「扫描人脸」= 自动识别整个视频中的人脸并创建跟踪遮罩。
+              「扫描人脸」= 自动识别视频或照片中的人脸并创建遮罩。
               圈选遮罩后，首次播放或导出时会自动向前、向后跟踪整个片段。
+              导入照片时为单张编辑模式，导出 PNG。
             </p>
             <p className="hint">
               空格 = 播放/暂停；I = 入点，O = 出点，S = 分割；
@@ -502,6 +631,68 @@ function App() {
                 </span>
               </span>
             </label>
+            <div className="settings-row">
+              <span>
+                <b>识别精度</b>
+                <br />
+                <span className="settings-hint">
+                  快速：每 0.5s 采样；均衡：每 0.25s 采样；精确：采样更密且追踪时周期性重锚人脸，速度最慢
+                </span>
+              </span>
+              <select
+                value={precision}
+                onChange={(e) => {
+                  const v = Number(e.target.value) as Precision;
+                  setPrecisionState(v);
+                  setPrecision(v);
+                }}
+              >
+                <option value={0}>快速</option>
+                <option value={1}>均衡</option>
+                <option value={2}>精确</option>
+              </select>
+            </div>
+            <details className="hint-details">
+              <summary>高级：追踪融合参数</summary>
+              <p className="hint">
+                模型追踪与颜色追踪逐帧融合的权重。颜色框与模型框重合度（IoU）低于阈值时按漂移权重融合；颜色目标不可靠（低饱和度）时按低置信权重融合。
+              </p>
+              {(
+                [
+                  ["iou", "IoU 阈值"],
+                  ["wNormal", "正常权重"],
+                  ["wDrift", "漂移权重"],
+                  ["wLow", "低置信权重"],
+                ] as [keyof FusionParams, string][]
+              ).map(([key, label]) => (
+                <label className="settings-row fusion-row" key={key}>
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={fusion[key]}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.min(1, Number(e.target.value)));
+                      if (!Number.isFinite(v)) return;
+                      setFusion({ ...fusion, [key]: v });
+                      setFusionParam(key, v);
+                    }}
+                  />
+                </label>
+              ))}
+              <button
+                onClick={() => {
+                  setFusion(FUSION_DEFAULTS);
+                  for (const k of Object.keys(FUSION_DEFAULTS) as (keyof FusionParams)[]) {
+                    setFusionParam(k, FUSION_DEFAULTS[k]);
+                  }
+                }}
+              >
+                恢复默认
+              </button>
+            </details>
             <div className="notice-actions">
               <button className="crop-confirm" onClick={() => setShowSettings(false)}>
                 完成

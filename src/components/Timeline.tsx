@@ -1,13 +1,22 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useStore, clipOutDur, totalDuration } from "../store";
 import NumberField from "./NumberField";
 import type { Clip } from "../types";
+
+interface LaneItem {
+  id: string;
+  s: number;
+  e: number;
+  fixed: boolean;
+  lane: number;
+}
 
 export default function Timeline() {
   const clips = useStore((s) => s.clips);
   const tracks = useStore((s) => s.tracks);
   const currentTime = useStore((s) => s.currentTime);
   const setCurrentTime = useStore((s) => s.setCurrentTime);
+  const selectedTrackId = useStore((s) => s.selectedTrackId);
   const updateClip = useStore((s) => s.updateClip);
   const removeClip = useStore((s) => s.removeClip);
   const moveClip = useStore((s) => s.moveClip);
@@ -18,6 +27,40 @@ export default function Timeline() {
   const selDraggingRef = useRef(false);
 
   const total = totalDuration(clips);
+  const isImage = clips.length > 0 && clips[0].kind === "image";
+
+  // 把每个遮罩的出现/消失时间段换算到合成时间轴，再按重叠关系
+  // 分配到不同泳道（区间图着色），保证重叠遮罩各自可见
+  const lanes = useMemo(() => {
+    const items: LaneItem[] = [];
+    let acc = 0;
+    for (const c of clips) {
+      const d = clipOutDur(c);
+      for (const t of tracks) {
+        if (t.clipId !== c.id) continue;
+        const ws = Math.max(t.tStart ?? c.in, c.in);
+        const we = Math.min(t.tEnd ?? c.out, c.out);
+        const s = acc + (ws - c.in) / c.speed;
+        const e = acc + (we - c.in) / c.speed;
+        if (e - s > 0.001) items.push({ id: t.id, s, e, fixed: t.fixed, lane: 0 });
+      }
+      acc += d;
+    }
+    items.sort((a, b) => a.s - b.s);
+    const laneEnds: number[] = [];
+    for (const it of items) {
+      let lane = laneEnds.findIndex((end) => end <= it.s + 1e-6);
+      if (lane < 0) {
+        lane = laneEnds.length;
+        laneEnds.push(0);
+      }
+      laneEnds[lane] = it.e;
+      it.lane = lane;
+    }
+    const laneCount = Math.max(laneEnds.length, 1);
+    const laneHeight = Math.max(3, Math.min(8, (18 - (laneCount - 1)) / laneCount));
+    return { items, laneCount, laneHeight };
+  }, [clips, tracks]);
 
   const railTime = (clientX: number, rail: DOMRect) =>
     Math.max(0, Math.min(total, ((clientX - rail.left) / rail.width) * total));
@@ -135,27 +178,38 @@ export default function Timeline() {
               className="clip-strip"
               style={{ width: `${w}%` }}
             >
-              <div
-                className="trim-handle left"
-                title="拖动裁剪入点"
-                onMouseDown={(e) => startTrim(e, c, "in")}
-              />
-              <div
-                className="trim-handle right"
-                title="拖动裁剪出点"
-                onMouseDown={(e) => startTrim(e, c, "out")}
-              />
+              {c.kind !== "image" && (
+                <>
+                  <div
+                    className="trim-handle left"
+                    title="拖动裁剪入点"
+                    onMouseDown={(e) => startTrim(e, c, "in")}
+                  />
+                  <div
+                    className="trim-handle right"
+                    title="拖动裁剪出点"
+                    onMouseDown={(e) => startTrim(e, c, "out")}
+                  />
+                </>
+              )}
               <div className="clip-name">
-                {c.src.split("/").pop()} · {clipOutDur(c).toFixed(1)}s
+                {c.kind === "image" ? "🖼 " : ""}
+                {c.src.split("/").pop()}
+                {c.kind !== "image" && ` · ${clipOutDur(c).toFixed(1)}s`}
                 {c.speed !== 1 && ` · ${c.speed}x`}
                 {nTracks > 0 && ` · ${nTracks}框`}
               </div>
               <div className="clip-ops">
-                <button title="前移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, -1); }}>◀</button>
-                <button title="后移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, 1); }}>▶</button>
-                <button title="删除" onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除片段 ${c.src.split("/").pop()}？该片段上的遮罩也会一并删除`)) { useStore.getState().pushHistory(); removeClip(c.id); } }}>✕</button>
+                {c.kind !== "image" && (
+                  <>
+                    <button title="前移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, -1); }}>◀</button>
+                    <button title="后移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, 1); }}>▶</button>
+                  </>
+                )}
+                <button title="删除" onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除${c.kind === "image" ? "照片" : "片段"} ${c.src.split("/").pop()}？其上的遮罩也会一并删除`)) { useStore.getState().pushHistory(); removeClip(c.id); } }}>✕</button>
               </div>
-              <div className="clip-trim" onClick={(e) => e.stopPropagation()}>
+              {c.kind !== "image" && (
+                <div className="clip-trim" onClick={(e) => e.stopPropagation()}>
                 <label>
                   入
                   <NumberField
@@ -232,24 +286,56 @@ export default function Timeline() {
                     </button>
                   </>
                 )}
-              </div>
+                </div>
+              )}
             </div>
           );
         })}
-        {clips.length === 0 && <div className="timeline-empty">时间轴为空 — 点击"导入视频"</div>}
+        {clips.length === 0 && <div className="timeline-empty">时间轴为空 — 点击"导入媒体"</div>}
       </div>
+      {total > 0 && lanes.items.length > 0 && (
+        <div
+          className="mask-lanes"
+          style={{ height: lanes.laneCount * (lanes.laneHeight + 1) }}
+          title="遮罩时间段：点击定位"
+        >
+          {lanes.items.map((it) => (
+            <div
+              key={it.id}
+              className={`mask-lane ${it.fixed ? "fixed" : ""} ${
+                it.id === selectedTrackId ? "selected" : ""
+              }`}
+              style={{
+                left: `${(it.s / total) * 100}%`,
+                width: `${Math.max(((it.e - it.s) / total) * 100, 0.5)}%`,
+                top: it.lane * (lanes.laneHeight + 1),
+                height: lanes.laneHeight,
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                useStore.getState().setSelectedTrack(it.id);
+                setCurrentTime(Math.min(it.s, total - 1e-3));
+              }}
+            />
+          ))}
+        </div>
+      )}
       {total > 0 && (
         <>
           <div
             className="playhead-rail"
             onMouseDown={(e) => {
-              if (e.shiftKey) {
+              if (e.shiftKey && !isImage) {
                 startSel(e);
               } else {
                 startScrub(e);
               }
             }}
-            title="按住拖动 = 移动播放头；Shift+拖动 = 选择加速区间"
+            title={
+              isImage
+                ? "按住拖动 = 移动播放头"
+                : "按住拖动 = 移动播放头；Shift+拖动 = 选择加速区间"
+            }
           >
             {sel && sel.b - sel.a >= 0.05 && (
               <div
