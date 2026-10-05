@@ -1,6 +1,6 @@
 [package]
 name = "pixelmask"
-version = "0.1.0"
+version = "0.2.0"
 description = "PixelMask - local photo & video redaction for macOS"
 authors = ["tullyhu"]
 edition = "2021"
