@@ -34,3 +34,8 @@ native-engine/.build/
 !.dev.vars.example
 .env*
 !.env.example
+
+# tsc -b artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

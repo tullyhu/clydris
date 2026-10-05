@@ -13,7 +13,7 @@ fn engine_path() -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-const NATIVE_BUILD: &str = "native-20260915-2";
+const NATIVE_BUILD: &str = "native-20261005-1";
 
 fn engine_alive() -> bool {
     std::net::TcpStream::connect("127.0.0.1:8765").is_ok()
