@@ -1,4 +1,4 @@
-# PixelMask
+# Clydris（macOS）
 
 本地照片 / 视频脱敏工具：圈选区域或自动识别人脸，自动跟踪并应用马赛克 / 高斯模糊 / 黑框，视频导出 MP4、照片导出 PNG。所有处理均在设备本地完成，不上传任何数据。
 
@@ -22,7 +22,7 @@
   - 导出：AVFoundation（视频）/ CoreImage（照片 PNG）
 - 前端与引擎通过 127.0.0.1 回环 HTTP（端口 8765）通信，引擎随 App 打包（Tauri externalBin）
 
-不包含任何第三方 ML 模型。算法与 PixelMask iOS 版保持一致（各自维护）。
+不包含任何第三方 ML 模型。算法与 Clydris iOS 版保持一致（各自维护）。
 
 ## 构建
 
@@ -32,7 +32,7 @@
 npm install
 npm run engine        # 构建原生引擎并复制到 src-tauri/binaries/
 npm run tauri dev     # 开发模式
-npm run tauri build   # 打包 PixelMask dmg（Apple Silicon）
+npm run tauri build   # 打包 Clydris dmg（Apple Silicon）
 ```
 
 引擎也可单独调试：`npm run engine:dev`（监听 127.0.0.1:8765）。

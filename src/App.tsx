@@ -306,7 +306,7 @@ function App() {
     if (s.clips.length === 0) return;
     const path = await save({
       defaultPath: "project.vproj.json",
-      filters: [{ name: "PixelMask 项目", extensions: ["json"] }],
+      filters: [{ name: "Clydris 项目", extensions: ["json"] }],
     });
     if (!path) return;
     try {
@@ -327,7 +327,7 @@ function App() {
   const openProject = async () => {
     const path = await open({
       multiple: false,
-      filters: [{ name: "PixelMask 项目", extensions: ["json"] }],
+      filters: [{ name: "Clydris 项目", extensions: ["json"] }],
     });
     if (!path || Array.isArray(path)) return;
     try {
@@ -710,7 +710,7 @@ function App() {
           >
             <h2>关于与开源许可</h2>
             <p className="notice-msg" style={{ maxWidth: "none" }}>
-              PixelMask · 所有处理均在本地完成
+              Clydris · 所有处理均在本地完成
             </p>
             <div className="notice-actions" style={{ marginTop: 0 }}>
               <button
