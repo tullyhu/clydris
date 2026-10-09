@@ -1,6 +1,8 @@
 # Clydris（macOS）
 
-本地照片 / 视频脱敏工具：圈选区域或自动识别人脸，自动跟踪并应用马赛克 / 高斯模糊 / 黑框，视频导出 MP4、照片导出 PNG。所有处理均在设备本地完成，不上传任何数据。
+本地照片 / 视频脱敏工具：圈选区域或自动识别人脸，自动跟踪并应用马赛克 / 高斯模糊 / 黑框，视频导出 MP4、照片导出 PNG。所有处理均在设备本地完成，不上传任何数据。界面支持中文 / English。
+
+*On-device photo & video redaction for macOS: auto face detection and object tracking with pixelate / blur / black-box masks. All processing happens locally. UI in 中文 & English.*
 
 ## 功能
 
@@ -10,6 +12,7 @@
 - 人脸识别：全片扫描自动建轨，可选识别精度（快速 / 均衡 / 精确）
 - 目标跟踪：Vision 模型追踪 + 颜色追踪逐帧融合，支持多关键帧分段双向追踪、漂移纠正与出画保护
 - 编辑器：画布缩放/平移、时间轴多泳道遮罩可视化、撤销/重做、项目文件（.vproj.json）
+- 界面语言：中文 / English，首次启动跟随系统语言，可在设置中切换
 - 导出可选「精确人像轮廓」（VNGeneratePersonSegmentationRequest）
 
 ## 架构
