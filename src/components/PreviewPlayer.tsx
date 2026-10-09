@@ -4,6 +4,7 @@ import { useStore, locate, clipOutDur, totalDuration, uid, interpolate } from ".
 import { syncDirtyTracks } from "../trackSync";
 import { api } from "../api";
 import { scanInterval } from "../settings";
+import { useT } from "../i18n";
 import type { CropRect, Track } from "../types";
 
 type DragMode =
@@ -24,6 +25,7 @@ type DragMode =
   | { kind: "crop-move"; dx: number; dy: number; box: CropRect };
 
 export default function PreviewPlayer() {
+  const t = useT();
   const clips = useStore((s) => s.clips);
   const tracks = useStore((s) => s.tracks);
   const tool = useStore((s) => s.tool);
@@ -389,7 +391,7 @@ export default function PreviewPlayer() {
     };
     // 照片：单帧检测，直接创建固定遮罩
     if (c.kind === "image") {
-      s.setBusy("正在识别人脸…");
+      s.setBusy(t("detectingFaces"));
       try {
         const { boxes } = await api.detect(c.src, 0);
         const existing = s.tracks.filter((t) => t.clipId === c.id);
@@ -401,7 +403,7 @@ export default function PreviewPlayer() {
             })
         );
         if (fresh.length === 0) {
-          setDetectMsg(boxes.length > 0 ? "检测到的人脸已有遮罩" : "照片中没有检测到人脸");
+          setDetectMsg(boxes.length > 0 ? t("facesAlreadyMasked") : t("noFaceInPhoto"));
           setTimeout(() => setDetectMsg(null), 3000);
           return;
         }
@@ -431,10 +433,10 @@ export default function PreviewPlayer() {
           firstId ??= track.id;
         }
         if (firstId) s.setSelectedTrack(firstId);
-        setDetectMsg(`已创建 ${fresh.length} 个人脸遮罩`);
+        setDetectMsg(t("createdMasks", { n: fresh.length }));
         setTimeout(() => setDetectMsg(null), 3000);
       } catch (e) {
-        setDetectMsg(`识别失败: ${e instanceof Error ? e.message : e}`);
+        setDetectMsg(t("detectFailed", { err: e instanceof Error ? e.message : `${e}` }));
         setTimeout(() => setDetectMsg(null), 5000);
       } finally {
         s.setBusy(null);
@@ -442,7 +444,7 @@ export default function PreviewPlayer() {
       }
       return;
     }
-    s.setBusy("正在扫描全片人脸…");
+    s.setBusy(t("scanningFaces"));
     try {
       const { tracks: scanned } = await api.scan(c.src, scanInterval());
       const existing = s.tracks.filter((t) => t.clipId === c.id);
@@ -454,7 +456,7 @@ export default function PreviewPlayer() {
         });
       });
       if (fresh.length === 0) {
-        setDetectMsg(scanned.length > 0 ? "检测到的人脸已有遮罩" : "整个视频中没有检测到人脸");
+        setDetectMsg(scanned.length > 0 ? t("facesAlreadyMasked") : t("noFaceInVideo"));
         setTimeout(() => setDetectMsg(null), 3000);
         return;
       }
@@ -481,10 +483,10 @@ export default function PreviewPlayer() {
         firstId ??= track.id;
       }
       if (firstId) s.setSelectedTrack(firstId);
-      setDetectMsg(`已创建 ${fresh.length} 个人脸遮罩，播放时自动跟踪`);
+      setDetectMsg(t("createdMasksTrack", { n: fresh.length }));
       setTimeout(() => setDetectMsg(null), 3000);
     } catch (e) {
-      setDetectMsg(`扫描失败: ${e instanceof Error ? e.message : e}`);
+      setDetectMsg(t("scanFailed", { err: e instanceof Error ? e.message : `${e}` }));
       setTimeout(() => setDetectMsg(null), 5000);
     } finally {
       s.setBusy(null);
@@ -1023,13 +1025,13 @@ export default function PreviewPlayer() {
                       useStore.getState().setTool("select");
                     }}
                   >
-                    确定裁切
+                    {t("cropConfirm")}
                   </button>
                   <button
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => useStore.getState().setTool("select")}
                   >
-                    取消
+                    {t("cancel")}
                   </button>
                 </div>
               </>
@@ -1050,14 +1052,14 @@ export default function PreviewPlayer() {
             )}
           </div>
         ) : (
-          <div className="preview-empty">导入视频或照片开始编辑</div>
+          <div className="preview-empty">{t("emptyPreview")}</div>
         )}
         {busy && (
           <div className="preview-busy">
             <div className="spinner" />
             <div>{busy}</div>
-            {busy.startsWith("跟踪") && (
-              <div className="preview-busy-sub">跟踪完成前无法播放预览</div>
+            {(busy.startsWith("跟踪") || busy.startsWith("Tracking")) && (
+              <div className="preview-busy-sub">{t("trackingBusySub")}</div>
             )}
           </div>
         )}
@@ -1069,7 +1071,7 @@ export default function PreviewPlayer() {
               className={playing && playDir === -1 ? "active" : ""}
               onClick={() => playInDirection(-1)}
               disabled={!clip || !!busy}
-              title="倒放"
+              title={t("reverse")}
             >
               ◀
             </button>
@@ -1077,11 +1079,11 @@ export default function PreviewPlayer() {
               className={playing && playDir === 1 ? "active" : ""}
               onClick={() => playInDirection(1)}
               disabled={!clip || !!busy}
-              title="播放"
+              title={t("play")}
             >
               ▶
             </button>
-            <button onClick={stop} disabled={!clip} title="停止并回到开头">
+            <button onClick={stop} disabled={!clip} title={t("stopHint")}>
               ■
             </button>
             {[0.5, 1, 2].map((r) => (
@@ -1098,15 +1100,15 @@ export default function PreviewPlayer() {
         <button
           onClick={scanAllFaces}
           disabled={!clip || !!busy || detecting}
-          title={isImage ? "识别照片中的人脸并创建固定遮罩" : "扫描整个视频，自动识别人脸并创建跟踪遮罩"}
+          title={isImage ? t("scanFacesHintImage") : t("scanFacesHintVideo")}
         >
-          {detecting ? "识别中…" : "扫描人脸"}
+          {detecting ? t("detecting") : t("scanFaces")}
         </button>
         {clip && (
           <>
             <span className="sep-v" />
             <button
-              title="缩小"
+              title={t("zoomOut")}
               disabled={zoom <= 1}
               onClick={() => {
                 const z = Math.max(1, zoom / 1.25);
@@ -1118,7 +1120,7 @@ export default function PreviewPlayer() {
             </button>
             <span className="zoom-value">{Math.round(zoom * 100)}%</span>
             <button
-              title="放大（也可在画面上滚轮/双指捏合）"
+              title={t("zoomInHint")}
               disabled={zoom >= 6}
               onClick={() => {
                 const z = Math.min(6, zoom * 1.25);
@@ -1132,13 +1134,13 @@ export default function PreviewPlayer() {
               <>
                 <button
                   className={panMode ? "active" : ""}
-                  title="平移模式：拖动移动画布（Esc 退出）"
+                  title={t("panModeHint")}
                   onClick={() => setPanMode(!panMode)}
                 >
-                  ✋ 平移
+                  {t("pan")}
                 </button>
                 <button
-                  title="重置缩放"
+                  title={t("resetZoom")}
                   onClick={() => {
                     setZoom(1);
                     setPan({ x: 0, y: 0 });

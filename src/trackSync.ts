@@ -1,6 +1,7 @@
 import { useStore } from "./store";
 import { api } from "./api";
 import { faceReanchor, getFusionParams } from "./settings";
+import { t } from "./i18n";
 
 export async function syncDirtyTracks(): Promise<boolean> {
   const s = useStore.getState();
@@ -13,33 +14,33 @@ export async function syncDirtyTracks(): Promise<boolean> {
   const reanchor = faceReanchor();
   const fusion = getFusionParams();
   let i = 0;
-  for (const t of dirty) {
+  for (const tr of dirty) {
     i++;
-    const clip = s.clips.find((c) => c.id === t.clipId);
+    const clip = s.clips.find((c) => c.id === tr.clipId);
     if (!clip) {
-      useStore.getState().updateTrack(t.id, { dirty: false, dirtyFrom: null });
+      useStore.getState().updateTrack(tr.id, { dirty: false, dirtyFrom: null });
       continue;
     }
-    const windowStart = Math.round((t.tStart ?? clip.in) * clip.fps);
-    const hasCoverage = Object.keys(t.dense).length > 0;
+    const windowStart = Math.round((tr.tStart ?? clip.in) * clip.fps);
+    const hasCoverage = Object.keys(tr.dense).length > 0;
     const fromFrame = hasCoverage
-      ? (t.dirtyFrom ?? windowStart)
+      ? (tr.dirtyFrom ?? windowStart)
       : windowStart;
-    const endFrame = Math.round((t.tEnd ?? clip.out) * clip.fps);
-    useStore.getState().setBusy(`跟踪中… ${i}/${dirty.length}`);
+    const endFrame = Math.round((tr.tEnd ?? clip.out) * clip.fps);
+    useStore.getState().setBusy(t("trackingProgress", { i, n: dirty.length }));
     try {
-      const { dense } = await api.track(clip.src, t.keyframes, fromFrame, endFrame, {
+      const { dense } = await api.track(clip.src, tr.keyframes, fromFrame, endFrame, {
         faceReanchor: reanchor,
         fusion,
       });
-      useStore.getState().mergeDense(t.id, dense);
-      useStore.getState().updateTrack(t.id, { dirty: false, dirtyFrom: null });
+      useStore.getState().mergeDense(tr.id, dense);
+      useStore.getState().updateTrack(tr.id, { dirty: false, dirtyFrom: null });
     } catch (e) {
       useStore.getState().setBusy(null);
       useStore
         .getState()
         .setSyncError(
-          `遮罩跟踪失败: ${e instanceof Error ? e.message : e}`
+          t("trackFailed", { err: e instanceof Error ? e.message : `${e}` })
         );
       return false;
     }

@@ -14,6 +14,7 @@ import {
   type Precision,
   type FusionParams,
 } from "./settings";
+import { useT, getLang, setLang, type Lang } from "./i18n";
 import type { Clip, Track } from "./types";
 import licensesText from "../licenses/THIRD-PARTY-LICENSES.txt?raw";
 import PreviewPlayer from "./components/PreviewPlayer";
@@ -22,6 +23,7 @@ import NumberField from "./components/NumberField";
 import "./App.css";
 
 function App() {
+  const t = useT();
   const clips = useStore((s) => s.clips);
   const tracks = useStore((s) => s.tracks);
   const tool = useStore((s) => s.tool);
@@ -79,15 +81,15 @@ function App() {
       IMAGE_EXTS.includes(p.split(".").pop()?.toLowerCase() ?? "")
     );
     if (hasImage && paths.length) {
-      setNotice({ title: "无法导入", msg: "照片项目为单张模式，请先删除现有照片" });
+      setNotice({ title: t("cannotImport"), msg: t("photoSingleMode") });
       return;
     }
     if (images.length && existing.length) {
-      setNotice({ title: "无法导入", msg: "照片不能与视频混合编辑，请先清空时间轴" });
+      setNotice({ title: t("cannotImport"), msg: t("photoNoMix") });
       return;
     }
     if (images.length > 1) {
-      setNotice({ title: "无法导入", msg: "一次只能导入一张照片" });
+      setNotice({ title: t("cannotImport"), msg: t("onePhotoOnly") });
       return;
     }
     if (paths.length) useStore.getState().pushHistory();
@@ -111,8 +113,11 @@ function App() {
         useStore.getState().addClip(clip);
       } catch (e) {
         setNotice({
-          title: "导入失败",
-          msg: `无法导入 ${p.split("/").pop()}：${e instanceof Error ? e.message : e}。请确认引擎已构建（npm run engine）`,
+          title: t("importFailed"),
+          msg: t("importFailedMsg", {
+            name: p.split("/").pop() ?? p,
+            err: e instanceof Error ? e.message : `${e}`,
+          }),
         });
       }
     }
@@ -136,9 +141,9 @@ function App() {
     const paths = await open({
       multiple: true,
       filters: [
-        { name: "媒体", extensions: [...VIDEO_EXTS, ...IMAGE_EXTS] },
-        { name: "视频", extensions: VIDEO_EXTS },
-        { name: "照片", extensions: IMAGE_EXTS },
+        { name: t("filterMedia"), extensions: [...VIDEO_EXTS, ...IMAGE_EXTS] },
+        { name: t("filterVideo"), extensions: VIDEO_EXTS },
+        { name: t("filterPhoto"), extensions: IMAGE_EXTS },
       ],
     });
     if (!paths) return;
@@ -165,15 +170,15 @@ function App() {
           keyframes: t.keyframes,
         })),
     };
-    s.setBusy("正在导出…");
+    s.setBusy(t("exporting"));
     try {
       await api.renderImage(project, output, personSegmentation);
       s.setBusy(null);
-      setNotice({ title: "导出完成", msg: output, path: output });
+      setNotice({ title: t("exportDone"), msg: output, path: output });
     } catch (e) {
       s.setBusy(null);
       setNotice({
-        title: "导出失败",
+        title: t("exportFailed"),
         msg: `${e instanceof Error ? e.message : e}`,
       });
     }
@@ -211,7 +216,7 @@ function App() {
         tEnd: t.tEnd,
       })),
     };
-    s.setBusy("正在导出…");
+    s.setBusy(t("exporting"));
     setRenderPct(0);
     try {
       await api.render(project, output, personSegmentation);
@@ -229,12 +234,12 @@ function App() {
           stopPoll();
           setRenderPct(null);
           s.setBusy(null);
-          setNotice({ title: "导出中断", msg: "引擎连接丢失，请重试" });
+          setNotice({ title: t("exportInterrupted"), msg: t("engineConnLost") });
           return;
         }
         setRenderPct(Math.round(st.progress * 100));
         if (st.state === "running") {
-          s.setBusy("正在导出…");
+          s.setBusy(t("exporting"));
         } else if (st.state === "idle") {
           stopPoll();
           setRenderPct(null);
@@ -244,7 +249,7 @@ function App() {
           setRenderPct(null);
           s.setBusy(null);
           setNotice({
-            title: "导出完成",
+            title: t("exportDone"),
             msg: st.output ?? output,
             path: st.output ?? output,
           });
@@ -252,18 +257,18 @@ function App() {
           stopPoll();
           setRenderPct(null);
           s.setBusy(null);
-          setNotice({ title: "导出失败", msg: st.error ?? "未知错误" });
+          setNotice({ title: t("exportFailed"), msg: st.error ?? t("unknownError") });
         }
       }, 500);
       renderPollRef.current = poll;
     } catch (e) {
       const msg =
         e instanceof TypeError
-          ? "引擎未响应（已断开），看门狗会自动重启，请几秒后重试"
+          ? t("engineNoResponse")
           : `${e}`;
       s.setBusy(null);
       setRenderPct(null);
-      setNotice({ title: "导出失败", msg });
+      setNotice({ title: t("exportFailed"), msg });
     }
   };
 
@@ -277,7 +282,7 @@ function App() {
     }
     setRenderPct(null);
     useStore.getState().setBusy(null);
-    setNotice({ title: "导出已取消", msg: "导出任务已终止" });
+    setNotice({ title: t("exportCancelled"), msg: t("exportCancelledMsg") });
   };
 
   const setTrackWindow = (t: Track, which: "start" | "end", raw: number | null) => {
@@ -306,7 +311,7 @@ function App() {
     if (s.clips.length === 0) return;
     const path = await save({
       defaultPath: "project.vproj.json",
-      filters: [{ name: "Clydris 项目", extensions: ["json"] }],
+      filters: [{ name: t("filterProject"), extensions: ["json"] }],
     });
     if (!path) return;
     try {
@@ -315,10 +320,10 @@ function App() {
         clips: s.clips,
         tracks: s.tracks,
       });
-      setNotice({ title: "项目已保存", msg: path, path });
+      setNotice({ title: t("projectSaved"), msg: path, path });
     } catch (e) {
       setNotice({
-        title: "保存失败",
+        title: t("saveFailed"),
         msg: `${e instanceof Error ? e.message : e}`,
       });
     }
@@ -327,7 +332,7 @@ function App() {
   const openProject = async () => {
     const path = await open({
       multiple: false,
-      filters: [{ name: "Clydris 项目", extensions: ["json"] }],
+      filters: [{ name: t("filterProject"), extensions: ["json"] }],
     });
     if (!path || Array.isArray(path)) return;
     try {
@@ -337,7 +342,7 @@ function App() {
         !Array.isArray(data.clips) ||
         !Array.isArray(data.tracks)
       ) {
-        setNotice({ title: "打开失败", msg: "项目文件格式不受支持" });
+        setNotice({ title: t("openFailed"), msg: t("unsupportedFormat") });
         return;
       }
       const clips: Clip[] = [];
@@ -359,21 +364,21 @@ function App() {
         .map((t) => ({ ...t, intensity: t.intensity ?? 0.5 }));
       if (clips.length === 0) {
         setNotice({
-          title: "打开失败",
-          msg: `所有源文件均不可用：${skipped.join("、")}`,
+          title: t("openFailed"),
+          msg: t("allSourcesUnavailable", { names: skipped.join(", ") }),
         });
         return;
       }
       useStore.getState().loadProject(clips, tracks);
       if (skipped.length) {
         setNotice({
-          title: "部分片段缺失",
-          msg: `以下源视频不可用，已从项目中移除：${skipped.join("、")}`,
+          title: t("partialMissing"),
+          msg: t("missingSourcesMsg", { names: skipped.join(", ") }),
         });
       }
     } catch (e) {
       setNotice({
-        title: "打开失败",
+        title: t("openFailed"),
         msg: `${e instanceof Error ? e.message : e}`,
       });
     }
@@ -388,20 +393,20 @@ function App() {
     <main className="app">
       <header className="toolbar">
         <button onClick={importVideo} disabled={!sidecarReady}>
-          导入媒体
+          {t("importMedia")}
         </button>
-        <button onClick={openProject} disabled={!sidecarReady} title="打开 .vproj.json 项目文件">
-          打开项目
+        <button onClick={openProject} disabled={!sidecarReady} title={t("openProjectHint")}>
+          {t("openProject")}
         </button>
-        <button onClick={saveProject} disabled={!sidecarReady || clips.length === 0} title="保存为 .vproj.json 项目文件">
-          保存项目
+        <button onClick={saveProject} disabled={!sidecarReady || clips.length === 0} title={t("saveProjectHint")}>
+          {t("saveProject")}
         </button>
         <span className="sep" />
-        <button onClick={() => useStore.getState().undo()} disabled={!canUndo} title="撤销 (⌘Z)">
-          ↩ 撤销
+        <button onClick={() => useStore.getState().undo()} disabled={!canUndo} title={t("undoHint")}>
+          {t("undo")}
         </button>
-        <button onClick={() => useStore.getState().redo()} disabled={!canRedo} title="重做 (⇧⌘Z)">
-          ↪ 重做
+        <button onClick={() => useStore.getState().redo()} disabled={!canRedo} title={t("redoHint")}>
+          {t("redo")}
         </button>
         <span className="sep" />
         <button
@@ -410,14 +415,14 @@ function App() {
             useStore.getState().setTool(tool === "crop" ? "select" : "crop")
           }
         >
-          裁切画面
+          {t("crop")}
         </button>
         {loc?.clip.crop && (
           <button onClick={() => {
             useStore.getState().pushHistory();
             useStore.getState().updateClip(loc.clip.id, { crop: null });
           }}>
-            清除裁切
+            {t("clearCrop")}
           </button>
         )}
         <span className="sep" />
@@ -427,30 +432,30 @@ function App() {
           disabled={!sidecarReady || clips.length === 0 || renderPct !== null}
         >
           {isImageProject
-            ? "导出 PNG"
+            ? t("exportPng")
             : renderPct !== null
-              ? `导出中 ${renderPct}%`
-              : "导出 MP4"}
+              ? t("exportingPct", { pct: renderPct })
+              : t("exportMp4")}
         </button>
         {renderPct !== null && (
-          <button onClick={cancelExport} title="终止当前导出任务">
-            取消导出
+          <button onClick={cancelExport} title={t("cancelExportHint")}>
+            {t("cancelExport")}
           </button>
         )}
         <span className="status">
-          {sidecarReady ? (busy ?? "") : "引擎未连接（自动重试中）…"}
+          {sidecarReady ? (busy ?? "") : t("engineDisconnected")}
         </span>
         <button
           className="about-btn"
           onClick={() => setShowSettings(true)}
-          title="设置"
+          title={t("settings")}
         >
           ⚙
         </button>
         <button
           className="about-btn"
           onClick={() => setShowLicenses(true)}
-          title="关于与开源许可"
+          title={t("aboutHint")}
         >
           ⓘ
         </button>
@@ -459,38 +464,38 @@ function App() {
       <section className="workspace">
         <PreviewPlayer />
         <aside className="track-panel">
-          <h3>遮挡框 ({clipTracks.length})</h3>
-          {clipTracks.map((t: Track) => (
+          <h3>{t("maskPanelTitle", { n: clipTracks.length })}</h3>
+          {clipTracks.map((tr: Track) => (
             <div
-              key={t.id}
-              className={`track-item ${t.id === selectedTrackId ? "active" : ""}`}
-              onClick={() => useStore.getState().setSelectedTrack(t.id)}
+              key={tr.id}
+              className={`track-item ${tr.id === selectedTrackId ? "active" : ""}`}
+              onClick={() => useStore.getState().setSelectedTrack(tr.id)}
             >
-              <span className="dot" style={t.fixed ? { background: "#b88fff" } : undefined} />
-              <span>{t.fixed ? "固定遮罩" : "遮罩"}</span>
+              <span className="dot" style={tr.fixed ? { background: "#b88fff" } : undefined} />
+              <span>{tr.fixed ? t("fixedMask") : t("mask")}</span>
               <span className="track-range">
-                {(t.tStart ?? loc?.clip.in ?? 0).toFixed(1)}–
-                {(t.tEnd ?? loc?.clip.out ?? 0).toFixed(1)}s
+                {(tr.tStart ?? loc?.clip.in ?? 0).toFixed(1)}–
+                {(tr.tEnd ?? loc?.clip.out ?? 0).toFixed(1)}s
               </span>
               <select
-                value={t.effect}
+                value={tr.effect}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => {
                   useStore.getState().pushHistory();
-                  useStore.getState().updateTrack(t.id, {
+                  useStore.getState().updateTrack(tr.id, {
                     effect: e.target.value as Track["effect"],
                   });
                 }}
               >
-                <option value="pixelate">马赛克</option>
-                <option value="blur">高斯模糊</option>
-                <option value="blackbox">黑框</option>
+                <option value="pixelate">{t("effectPixelate")}</option>
+                <option value="blur">{t("effectBlur")}</option>
+                <option value="blackbox">{t("effectBlackbox")}</option>
               </select>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   useStore.getState().pushHistory();
-                  useStore.getState().removeTrack(t.id);
+                  useStore.getState().removeTrack(tr.id);
                 }}
               >
                 ✕
@@ -500,7 +505,7 @@ function App() {
           {selected && (
             <div className="track-window">
               <label>
-                出现(s)
+                {t("appearAt")}
                 <NumberField
                   step={0.1}
                   placeholder={loc?.clip.in.toFixed(1)}
@@ -509,7 +514,7 @@ function App() {
                 />
               </label>
               <label>
-                消失(s)
+                {t("disappearAt")}
                 <NumberField
                   step={0.1}
                   placeholder={loc?.clip.out.toFixed(1)}
@@ -522,7 +527,7 @@ function App() {
           {selected && selected.effect !== "blackbox" && (
             <div className="track-intensity">
               <label>
-                强度
+                {t("intensity")}
                 <input
                   type="range"
                   min={0}
@@ -542,7 +547,7 @@ function App() {
               </label>
               <button
                 className="apply-all"
-                title="把选中遮罩的效果和强度应用到当前片段的所有遮罩"
+                title={t("applyToAllHint")}
                 onClick={() => {
                   const s = useStore.getState();
                   s.pushHistory();
@@ -555,28 +560,15 @@ function App() {
                   }
                 }}
               >
-                应用到全部遮罩
+                {t("applyToAll")}
               </button>
             </div>
           )}
           <details className="hint-details">
-            <summary>操作帮助</summary>
-            <p className="hint">
-              在画面空白处按住拖动 = 创建遮罩；Shift+拖动 =
-              固定遮罩（不跟踪）；点住框内部 = 拖动；点住边框 =
-              调整大小；双击框 = 在此时间结束。编辑不影响已跟踪内容，按播放键时才统一跟踪。
-              滚轮/双指捏合 = 缩放画面，放大后开启「平移」可拖动画布。
-            </p>
-            <p className="hint">
-              「扫描人脸」= 自动识别视频或照片中的人脸并创建遮罩。
-              圈选遮罩后，首次播放或导出时会自动向前、向后跟踪整个片段。
-              导入照片时为单张编辑模式，导出 PNG。
-            </p>
-            <p className="hint">
-              空格 = 播放/暂停；I = 入点，O = 出点，S = 分割；
-              Delete = 删除选中遮罩；←/→ = 逐帧（Shift = ±1s）；
-              Esc = 退出裁切/取消选中；⌘Z = 撤销，⇧⌘Z = 重做。
-            </p>
+            <summary>{t("helpSummary")}</summary>
+            <p className="hint">{t("helpHint1")}</p>
+            <p className="hint">{t("helpHint2")}</p>
+            <p className="hint">{t("helpHint3")}</p>
           </details>
         </aside>
       </section>
@@ -586,7 +578,7 @@ function App() {
       {syncError && (
         <div className="startup-overlay">
           <div className="startup-box" onClick={(e) => e.stopPropagation()}>
-            <h2>跟踪失败</h2>
+            <h2>{t("trackingFailed")}</h2>
             <p className="notice-msg">{syncError}</p>
             <div className="notice-actions">
               <button
@@ -596,10 +588,10 @@ function App() {
                   syncDirtyTracks();
                 }}
               >
-                重试
+                {t("retry")}
               </button>
               <button onClick={() => useStore.getState().setSyncError(null)}>
-                忽略
+                {t("ignore")}
               </button>
             </div>
           </div>
@@ -612,7 +604,19 @@ function App() {
             className="startup-box license-box"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>设置</h2>
+            <h2>{t("settings")}</h2>
+            <div className="settings-row">
+              <span>
+                <b>{t("language")}</b>
+              </span>
+              <select
+                value={getLang()}
+                onChange={(e) => setLang(e.target.value as Lang)}
+              >
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
             <label className="settings-row">
               <input
                 type="checkbox"
@@ -624,19 +628,19 @@ function App() {
                 }}
               />
               <span>
-                <b>导出时精确人像轮廓</b>
+                <b>{t("personSegTitle")}</b>
                 <br />
                 <span className="settings-hint">
-                  开启后用 Apple 神经引擎生成贴合人形的遮罩边缘，导出时间明显增加
+                  {t("personSegHint")}
                 </span>
               </span>
             </label>
             <div className="settings-row">
               <span>
-                <b>识别精度</b>
+                <b>{t("precisionTitle")}</b>
                 <br />
                 <span className="settings-hint">
-                  快速：每 0.5s 采样；均衡：每 0.25s 采样；精确：采样更密且追踪时周期性重锚人脸，速度最慢
+                  {t("precisionHint")}
                 </span>
               </span>
               <select
@@ -647,22 +651,22 @@ function App() {
                   setPrecision(v);
                 }}
               >
-                <option value={0}>快速</option>
-                <option value={1}>均衡</option>
-                <option value={2}>精确</option>
+                <option value={0}>{t("precisionFast")}</option>
+                <option value={1}>{t("precisionBalanced")}</option>
+                <option value={2}>{t("precisionAccurate")}</option>
               </select>
             </div>
             <details className="hint-details">
-              <summary>高级：追踪融合参数</summary>
+              <summary>{t("fusionSummary")}</summary>
               <p className="hint">
-                模型追踪与颜色追踪逐帧融合的权重。颜色框与模型框重合度（IoU）低于阈值时按漂移权重融合；颜色目标不可靠（低饱和度）时按低置信权重融合。
+                {t("fusionHint")}
               </p>
               {(
                 [
-                  ["iou", "IoU 阈值"],
-                  ["wNormal", "正常权重"],
-                  ["wDrift", "漂移权重"],
-                  ["wLow", "低置信权重"],
+                  ["iou", t("fusionIou")],
+                  ["wNormal", t("fusionWNormal")],
+                  ["wDrift", t("fusionWDrift")],
+                  ["wLow", t("fusionWLow")],
                 ] as [keyof FusionParams, string][]
               ).map(([key, label]) => (
                 <label className="settings-row fusion-row" key={key}>
@@ -690,12 +694,12 @@ function App() {
                   }
                 }}
               >
-                恢复默认
+                {t("resetDefaults")}
               </button>
             </details>
             <div className="notice-actions">
               <button className="crop-confirm" onClick={() => setShowSettings(false)}>
-                完成
+                {t("done")}
               </button>
             </div>
           </div>
@@ -708,9 +712,9 @@ function App() {
             className="startup-box license-box"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>关于与开源许可</h2>
+            <h2>{t("aboutTitle")}</h2>
             <p className="notice-msg" style={{ maxWidth: "none" }}>
-              Clydris · 所有处理均在本地完成
+              {t("aboutTagline")}
             </p>
             <div className="notice-actions" style={{ marginTop: 0 }}>
               <button
@@ -718,13 +722,13 @@ function App() {
                   openUrl("https://video-redactor-privacy.tully-hu.workers.dev").catch(() => {})
                 }
               >
-                查看隐私政策
+                {t("viewPrivacy")}
               </button>
             </div>
             <div className="license-text">{licensesText}</div>
             <div className="notice-actions">
               <button className="crop-confirm" onClick={() => setShowLicenses(false)}>
-                关闭
+                {t("close")}
               </button>
             </div>
           </div>
@@ -743,11 +747,11 @@ function App() {
                     revealItemInDir(notice.path!).catch(() => {})
                   }
                 >
-                  在 Finder 中显示
+                  {t("showInFinder")}
                 </button>
               )}
               <button className="crop-confirm" onClick={() => setNotice(null)}>
-                确定
+                {t("ok")}
               </button>
             </div>
           </div>
@@ -758,10 +762,10 @@ function App() {
         <div className="startup-overlay">
           <div className="startup-box">
             <div className="spinner" />
-            <h2>正在启动视频引擎…</h2>
+            <h2>{t("engineStarting")}</h2>
             <p>
-              已等待 {startupElapsed} 秒
-              {startupElapsed < 60 ? "，通常只需几秒，请稍候" : ""}
+              {t("engineWaited", { s: startupElapsed })}
+              {startupElapsed < 60 ? t("engineUsuallyFast") : ""}
             </p>
             <div className="progress-track">
               <div
@@ -773,7 +777,7 @@ function App() {
             </div>
             {startupElapsed >= 60 && (
               <p className="startup-warn">
-                启动时间异常偏长，请尝试退出软件后重新打开
+                {t("engineSlowWarn")}
               </p>
             )}
           </div>

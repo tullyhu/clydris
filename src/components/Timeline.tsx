@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { useStore, clipOutDur, totalDuration } from "../store";
+import { useT } from "../i18n";
 import NumberField from "./NumberField";
 import type { Clip } from "../types";
 
@@ -12,6 +13,7 @@ interface LaneItem {
 }
 
 export default function Timeline() {
+  const t = useT();
   const clips = useStore((s) => s.clips);
   const tracks = useStore((s) => s.tracks);
   const currentTime = useStore((s) => s.currentTime);
@@ -182,12 +184,12 @@ export default function Timeline() {
                 <>
                   <div
                     className="trim-handle left"
-                    title="拖动裁剪入点"
+                    title={t("trimInHint")}
                     onMouseDown={(e) => startTrim(e, c, "in")}
                   />
                   <div
                     className="trim-handle right"
-                    title="拖动裁剪出点"
+                    title={t("trimOutHint")}
                     onMouseDown={(e) => startTrim(e, c, "out")}
                   />
                 </>
@@ -197,21 +199,21 @@ export default function Timeline() {
                 {c.src.split("/").pop()}
                 {c.kind !== "image" && ` · ${clipOutDur(c).toFixed(1)}s`}
                 {c.speed !== 1 && ` · ${c.speed}x`}
-                {nTracks > 0 && ` · ${nTracks}框`}
+                {nTracks > 0 && ` · ${t("masksCount", { n: nTracks })}`}
               </div>
               <div className="clip-ops">
                 {c.kind !== "image" && (
                   <>
-                    <button title="前移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, -1); }}>◀</button>
-                    <button title="后移" onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, 1); }}>▶</button>
+                    <button title={t("moveBack")} onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, -1); }}>◀</button>
+                    <button title={t("moveForward")} onClick={(e) => { e.stopPropagation(); useStore.getState().pushHistory(); moveClip(c.id, 1); }}>▶</button>
                   </>
                 )}
-                <button title="删除" onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除${c.kind === "image" ? "照片" : "片段"} ${c.src.split("/").pop()}？其上的遮罩也会一并删除`)) { useStore.getState().pushHistory(); removeClip(c.id); } }}>✕</button>
+                <button title={t("delete")} onClick={(e) => { e.stopPropagation(); if (window.confirm(t("deleteClipConfirm", { kind: c.kind === "image" ? t("kindPhoto") : t("kindClip"), name: c.src.split("/").pop() ?? c.src }))) { useStore.getState().pushHistory(); removeClip(c.id); } }}>✕</button>
               </div>
               {c.kind !== "image" && (
                 <div className="clip-trim" onClick={(e) => e.stopPropagation()}>
                 <label>
-                  入
+                  {t("inLabel")}
                   <NumberField
                     step={0.1}
                     min={0}
@@ -227,7 +229,7 @@ export default function Timeline() {
                   />
                 </label>
                 <label>
-                  出
+                  {t("outLabel")}
                   <NumberField
                     step={0.1}
                     min={c.in + 0.1}
@@ -243,7 +245,7 @@ export default function Timeline() {
                   />
                 </label>
                 <label>
-                  速度
+                  {t("speedLabel")}
                   <select
                     value={c.speed}
                     onChange={(e) => {
@@ -260,21 +262,21 @@ export default function Timeline() {
                   <>
                     <button
                       className="trim-set"
-                      title="把入点设为当前播放位置 (I)"
+                      title={t("setInHint")}
                       onClick={() => setAtPlayhead(c, "in", start)}
                     >
-                      入点⌖
+                      {t("setIn")}
                     </button>
                     <button
                       className="trim-set"
-                      title="把出点设为当前播放位置 (O)"
+                      title={t("setOutHint")}
                       onClick={() => setAtPlayhead(c, "out", start)}
                     >
-                      出点⌖
+                      {t("setOut")}
                     </button>
                     <button
                       className="trim-set"
-                      title="在播放头处分割 (S)"
+                      title={t("splitHint")}
                       onClick={() => {
                         useStore.getState().pushHistory();
                         useStore
@@ -282,7 +284,7 @@ export default function Timeline() {
                           .splitClip(c.id, c.in + (currentTime - start) * c.speed);
                       }}
                     >
-                      分割✂
+                      {t("split")}
                     </button>
                   </>
                 )}
@@ -291,13 +293,13 @@ export default function Timeline() {
             </div>
           );
         })}
-        {clips.length === 0 && <div className="timeline-empty">时间轴为空 — 点击"导入媒体"</div>}
+        {clips.length === 0 && <div className="timeline-empty">{t("timelineEmpty")}</div>}
       </div>
       {total > 0 && lanes.items.length > 0 && (
         <div
           className="mask-lanes"
           style={{ height: lanes.laneCount * (lanes.laneHeight + 1) }}
-          title="遮罩时间段：点击定位"
+          title={t("maskLanesHint")}
         >
           {lanes.items.map((it) => (
             <div
@@ -333,8 +335,8 @@ export default function Timeline() {
             }}
             title={
               isImage
-                ? "按住拖动 = 移动播放头"
-                : "按住拖动 = 移动播放头；Shift+拖动 = 选择加速区间"
+                ? t("playheadHintImage")
+                : t("playheadHintVideo")
             }
           >
             {sel && sel.b - sel.a >= 0.05 && (
@@ -354,8 +356,11 @@ export default function Timeline() {
           {sel && sel.b - sel.a >= 0.05 && (
             <div className="range-bar">
               <span>
-                已选 {sel.a.toFixed(2)}s – {sel.b.toFixed(2)}s（
-                {(sel.b - sel.a).toFixed(2)}s）
+                {t("rangeSelected", {
+                  a: sel.a.toFixed(2),
+                  b: sel.b.toFixed(2),
+                  d: (sel.b - sel.a).toFixed(2),
+                })}
               </span>
               {[0.5, 2, 4].map((r) => (
                 <button
@@ -376,7 +381,7 @@ export default function Timeline() {
                   setSel(null);
                 }}
               >
-                清除
+                {t("clear")}
               </button>
             </div>
           )}
