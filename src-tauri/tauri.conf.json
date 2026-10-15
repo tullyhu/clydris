@@ -38,6 +38,9 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Yi Hu (A26RV4ZT3X)"
+    },
     "targets": [
       "dmg"
     ],
