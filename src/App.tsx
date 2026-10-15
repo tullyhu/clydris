@@ -719,7 +719,9 @@ function App() {
             <div className="notice-actions" style={{ marginTop: 0 }}>
               <button
                 onClick={() =>
-                  openUrl("https://video-redactor-privacy.tully-hu.workers.dev").catch(() => {})
+                  openUrl(getLang() === "en"
+                    ? "https://clydris.com/clydris/privacy#en"
+                    : "https://clydris.com/clydris/privacy").catch(() => {})
                 }
               >
                 {t("viewPrivacy")}
